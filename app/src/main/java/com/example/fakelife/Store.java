@@ -32,8 +32,9 @@ final class Store {
     static String summary(Context c) { return s(c, "summary", ""); }
     static int chapterIdx(Context c) { return i(c, "chapter", 0); }
     static int lifeDays(Context c) { return i(c, "lifedays", 120); }
-    static int chapterDays(Context c) { return Math.max(1, i(c, "chapterdays", 14)); }
-    static int perChapter(Context c) { return Math.max(5, i(c, "perchapter", 30)); }
+    static int chapterDays(Context c) { return Math.max(1, i(c, "chapterdays2", 10)); }
+    static int maxTokens(Context c) { return Math.max(500, i(c, "maxtokens", 4000)); }
+    static int perChapter(Context c) { return Math.max(5, i(c, "perchapter2", 15)); }
     static int maxPhotos(Context c) { return Math.max(0, i(c, "maxphotos", 4)); }
     static boolean liveOn(Context c) { return b(c, "liveon", false); }
     static int liveMin(Context c) { return Math.max(1, i(c, "livemin", 20)); }

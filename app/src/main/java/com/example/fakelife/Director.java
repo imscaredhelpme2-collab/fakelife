@@ -88,19 +88,20 @@ final class Director {
                 .append(Store.perChapter(c)).append(" actions, in a believable mix, at most ")
                 .append(Store.maxPhotos(c)).append(" photos.\n");
         if (World.contactCount(c) == 0)
-            u.append("This is the first chapter: begin with 8 to 15 contact actions for the people in the bible, then everything else.\n");
+            u.append("This is the first chapter: begin with 6 to 10 contact actions (keep each note under 60 characters) for the main people in the bible, then everything else.\n");
         u.append("Make later texts and calls reference earlier ones when natural. Leave at least one thread unresolved at the end.\n");
 
         Journal.add(c, "Chapter " + (idx + 1) + ": asking Logfare (" + Tm.day(start) + " to " + Tm.day(end) + ")...");
         JSONObject j;
-        String reply = Logfare.chat(c, authorPrompt(c), u.toString(), 0.9, 7000);
+        String reply = Logfare.chat(c, authorPrompt(c), u.toString(), 0.9, Store.maxTokens(c));
         saveRaw(c, reply);
+        Journal.add(c, "Logfare answered (" + Logfare.lastInfo + ")");
         try {
             j = Logfare.parseJson(reply);
         } catch (Exception first) {
             Journal.add(c, "Reply was not valid JSON (" + first.getMessage() + "). Starts with: " + Logfare.shorten(reply.replace('\n', ' '), 160) + " ... retrying once");
             reply = Logfare.chat(c, authorPrompt(c),
-                    u + "\nIMPORTANT: your last reply was not valid JSON. Reply with ONLY the JSON object, keep it shorter.", 0.7, 7000);
+                    u + "\nIMPORTANT: your last reply was not valid JSON. Reply with ONLY the JSON object, keep it shorter.", 0.7, Store.maxTokens(c));
             saveRaw(c, reply);
             j = Logfare.parseJson(reply);
         }

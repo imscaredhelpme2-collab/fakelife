@@ -8,7 +8,7 @@ import android.widget.LinearLayout;
 import android.widget.Toast;
 
 public class SettingsActivity extends Activity {
-    private EditText endpoint, model, key, bible, rules, idea, lifeDays, chapterDays, perChapter, maxPhotos, liveMin, liveMax;
+    private EditText endpoint, model, key, bible, rules, idea, lifeDays, chapterDays, perChapter, maxPhotos, liveMin, liveMax, maxTokens;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -22,6 +22,29 @@ public class SettingsActivity extends Activity {
         Ui.add(col, endpoint);
         Ui.add(col, model);
         Ui.add(col, key);
+        Ui.add(col, Ui.button(this, "Test AI reply (real chat call)", new View.OnClickListener() {
+            @Override
+            public void onClick(final View v) {
+                saveAll(false);
+                v.setEnabled(false);
+                Toast.makeText(SettingsActivity.this, "Asking Logfare, this can take a while...", Toast.LENGTH_SHORT).show();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        final String report = Logfare.testChat(getApplicationContext());
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                v.setEnabled(true);
+                                new android.app.AlertDialog.Builder(SettingsActivity.this)
+                                        .setTitle("AI reply test").setMessage(report)
+                                        .setPositiveButton("OK", null).show();
+                            }
+                        });
+                    }
+                }).start();
+            }
+        }));
         Ui.add(col, Ui.button(this, "Test connection", new View.OnClickListener() {
             @Override
             public void onClick(final View v) {
@@ -91,11 +114,13 @@ public class SettingsActivity extends Activity {
         lifeDays = num("How many days back the story starts", Store.lifeDays(this));
         chapterDays = num("Days covered by each chapter", Store.chapterDays(this));
         perChapter = num("Things added per chapter (about)", Store.perChapter(this));
+        maxTokens = num("Max reply tokens (raise if replies get cut off or empty)", Store.maxTokens(this));
         maxPhotos = num("Max photos per chapter", Store.maxPhotos(this));
         Ui.add(col, Ui.text(this, "Changing 'days back' only matters after you press Reset story on the main screen.", 12, Ui.DIM));
         Ui.add(col, lifeDays);
         Ui.add(col, chapterDays);
         Ui.add(col, perChapter);
+        Ui.add(col, maxTokens);
         Ui.add(col, maxPhotos);
 
         Ui.add(col, Ui.heading(this, "Live mode (minutes between AI check-ins)"), 0, 14, 0, 2);
@@ -131,8 +156,8 @@ public class SettingsActivity extends Activity {
         Store.put(this, "bible", bible.getText().toString());
         Store.put(this, "rules", rules.getText().toString());
         Store.put(this, "lifedays", n(lifeDays, 120));
-        Store.put(this, "chapterdays", n(chapterDays, 14));
-        Store.put(this, "perchapter", n(perChapter, 30));
+        Store.put(this, "chapterdays2", n(chapterDays, 10));
+        Store.put(this, "perchapter2", n(perChapter, 15));
         Store.put(this, "maxphotos", n(maxPhotos, 4));
         Store.put(this, "livemin", n(liveMin, 20));
         Store.put(this, "livemax", n(liveMax, 180));

@@ -5,7 +5,9 @@ import android.content.Context;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -14,7 +16,27 @@ import java.net.URL;
 
 /** Minimal client for Logfare's OpenAI-compatible chat completions endpoint. */
 final class Logfare {
+    /** Short summary of the last call (time, size, finish reason), shown in logs and tests. */
+    static volatile String lastInfo = "";
+
+    /** Streams the reply first (no proxy timeouts on slow generations); falls back to a plain request. */
     static String chat(Context c, String system, String user, double temperature, int maxTokens) throws Exception {
+        try {
+            String r = chatOnce(c, system, user, temperature, maxTokens, true);
+            if (!r.trim().isEmpty()) return r;
+            Journal.add(c, "Streamed reply was empty, trying a normal request...");
+        } catch (java.net.SocketTimeoutException | java.net.UnknownHostException e) {
+            throw e;
+        } catch (IOException e) {
+            Journal.add(c, "Streaming failed (" + shorten(String.valueOf(e.getMessage()), 120) + "), trying a normal request...");
+        }
+        String r = chatOnce(c, system, user, temperature, maxTokens, false);
+        if (r.trim().isEmpty()) throw new IOException("Logfare returned an empty reply twice");
+        return r;
+    }
+
+    private static String chatOnce(Context c, String system, String user, double temperature, int maxTokens,
+                                   boolean stream) throws Exception {
         String key = Store.apiKey(c).trim();
         if (key.isEmpty()) throw new IOException("No Logfare API key set (Settings).");
         String base = Store.endpoint(c).trim();
@@ -24,6 +46,7 @@ final class Logfare {
         body.put("model", Store.model(c));
         body.put("temperature", temperature);
         body.put("max_tokens", maxTokens);
+        if (stream) body.put("stream", true);
         JSONArray msgs = new JSONArray();
         msgs.put(new JSONObject().put("role", "system").put("content", system));
         msgs.put(new JSONObject().put("role", "user").put("content", user));
@@ -33,23 +56,82 @@ final class Logfare {
         HttpURLConnection h = (HttpURLConnection) new URL(base + "/chat/completions").openConnection();
         h.setRequestMethod("POST");
         h.setConnectTimeout(20_000);
-        h.setReadTimeout(300_000);
+        h.setReadTimeout(stream ? 150_000 : 280_000); // streaming: max silence between chunks
         h.setDoOutput(true);
         h.setRequestProperty("Content-Type", "application/json");
+        h.setRequestProperty("Accept", stream ? "text/event-stream" : "application/json");
         h.setRequestProperty("Authorization", "Bearer " + key);
         h.getOutputStream().write(body.toString().getBytes("UTF-8"));
 
+        long t0 = System.currentTimeMillis();
         int code = h.getResponseCode();
-        InputStream in = code < 400 ? h.getInputStream() : h.getErrorStream();
-        String text = readAll(in);
-        h.disconnect();
-        if (code >= 400) throw new IOException("Logfare HTTP " + code + ": " + shorten(text, 300));
+        if (code >= 400) {
+            String err = readAll(h.getErrorStream());
+            h.disconnect();
+            throw new IOException("Logfare HTTP " + code + ": " + shorten(err, 300));
+        }
 
-        JSONObject r = new JSONObject(text);
-        JSONObject msg = r.getJSONArray("choices").getJSONObject(0).getJSONObject("message");
-        String content = msg.optString("content", "");
-        if (content.isEmpty()) throw new IOException("Logfare returned an empty reply.");
-        return content;
+        StringBuilder content = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
+        StringBuilder raw = new StringBuilder();
+        String finish = null;
+        java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(h.getInputStream(), "UTF-8"));
+        String line;
+        int lastLogged = 0;
+        while ((line = br.readLine()) != null) {
+            if (raw.length() < 400_000) raw.append(line).append('\n');
+            if (!line.startsWith("data:")) continue;
+            String d = line.substring(5).trim();
+            if (d.isEmpty()) continue;
+            if (d.equals("[DONE]")) break;
+            try {
+                JSONObject o = new JSONObject(d);
+                JSONArray ch = o.optJSONArray("choices");
+                if (ch == null || ch.length() == 0) continue;
+                JSONObject c0 = ch.getJSONObject(0);
+                JSONObject delta = c0.optJSONObject("delta");
+                if (delta != null) {
+                    if (!delta.isNull("content")) content.append(delta.getString("content"));
+                    if (!delta.isNull("reasoning_content")) reasoning.append(delta.getString("reasoning_content"));
+                    else if (!delta.isNull("reasoning")) reasoning.append(delta.getString("reasoning"));
+                }
+                if (!c0.isNull("finish_reason")) finish = c0.getString("finish_reason");
+            } catch (Exception ignored) {
+            }
+            int total = content.length() + reasoning.length();
+            if (total - lastLogged >= 3000) {
+                lastLogged = total;
+                Journal.add(c, "...receiving (" + content.length() + " chars" + (reasoning.length() > 0 ? ", thinking " + reasoning.length() : "") + ")");
+            }
+        }
+        br.close();
+        h.disconnect();
+
+        // Server ignored stream=true and sent one normal JSON body.
+        if (content.length() == 0 && raw.toString().trim().startsWith("{")) {
+            try {
+                JSONObject r = new JSONObject(raw.toString().trim());
+                JSONObject ch0 = r.getJSONArray("choices").getJSONObject(0);
+                JSONObject msg = ch0.getJSONObject("message");
+                if (!msg.isNull("content")) content.append(msg.getString("content"));
+                if (!msg.isNull("reasoning_content")) reasoning.append(msg.getString("reasoning_content"));
+                if (!ch0.isNull("finish_reason")) finish = ch0.getString("finish_reason");
+            } catch (Exception ignored) {
+            }
+        }
+        long secs = (System.currentTimeMillis() - t0) / 1000;
+        String out = content.toString();
+        if (out.trim().isEmpty() && reasoning.indexOf("{") >= 0) out = reasoning.toString();
+        lastInfo = secs + "s, " + out.length() + " chars, finish=" + finish;
+        Journal.add(c, "Logfare answered in " + secs + "s: " + out.length() + " chars, finish=" + finish
+                + (reasoning.length() > 0 ? ", thinking=" + reasoning.length() : ""));
+        if (out.trim().isEmpty()) {
+            String hint = "length".equals(finish)
+                    ? " The model ran out of tokens (probably spent them thinking): raise 'Max reply tokens' in Settings."
+                    : "";
+            throw new IOException("Logfare returned an empty reply (finish=" + finish + ", stream=" + stream + ")." + hint);
+        }
+        return out;
     }
 
     /** DNS lookup with a 10 second limit so a dead network fails fast with a clear message. */
@@ -112,15 +194,47 @@ final class Logfare {
             h.setConnectTimeout(15_000);
             h.setReadTimeout(15_000);
             h.setRequestProperty("Authorization", "Bearer " + Store.apiKey(c).trim());
-            sb.append("GET ").append(base).append("/models: HTTP ").append(h.getResponseCode()).append('\n');
+            int code = h.getResponseCode();
+            sb.append("GET ").append(base).append("/models: HTTP ").append(code).append('\n');
+            if (code == 200) {
+                try {
+                    JSONObject mj = new JSONObject(readAll(h.getInputStream()));
+                    JSONArray da = mj.optJSONArray("data");
+                    if (da != null) {
+                        sb.append("Models (").append(da.length()).append("): ");
+                        for (int i = 0; i < Math.min(30, da.length()); i++) sb.append(da.getJSONObject(i).optString("id")).append(i < da.length() - 1 ? ", " : "");
+                        sb.append('\n');
+                    }
+                } catch (Exception ignored) { }
+            }
             h.disconnect();
         } catch (Exception e) {
             sb.append("GET /models failed: ").append(e.getClass().getSimpleName()).append(": ").append(e.getMessage()).append('\n');
+        }
+        try {
+            long t = System.currentTimeMillis();
+            String r = chat(c, "Reply with only JSON.", "Return exactly {\"ok\":true}", 0.2, 600);
+            sb.append("Chat test: OK in ").append((System.currentTimeMillis() - t) / 1000).append("s, reply: ")
+                    .append(shorten(r.replace('\n', ' '), 80)).append(" [").append(lastInfo).append("]\n");
+        } catch (Exception e) {
+            sb.append("Chat test FAILED: ").append(e.getMessage()).append('\n');
         }
         sb.append("\nHow to read this: example.com FAILED too = this Android user/app has no internet at all. "
                 + "Only the Logfare host FAILED = something blocks that name (Private DNS, VPN, ad blocker). "
                 + "HTTP 401/403 = network is fine, check the API key.");
         return sb.toString();
+    }
+
+    /** Tiny real chat call so you can see what the model really returns and how long it takes. */
+    static String testChat(Context c) {
+        long t0 = System.currentTimeMillis();
+        try {
+            String r = chat(c, "Reply with ONE JSON object and nothing else.",
+                    "Return {\"ok\":true,\"actions\":[{\"t\":\"note\",\"title\":\"hi\",\"body\":\"test\"}]}", 0.2, 400);
+            return "OK in " + (System.currentTimeMillis() - t0) / 1000 + "s. Reply:\n" + shorten(r, 400);
+        } catch (Exception e) {
+            return "FAILED after " + (System.currentTimeMillis() - t0) / 1000 + "s: " + e.getClass().getSimpleName() + ": " + e.getMessage();
+        }
     }
 
     private static String readAll(InputStream in) throws IOException {
