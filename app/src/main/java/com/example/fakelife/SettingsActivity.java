@@ -161,6 +161,7 @@ public class SettingsActivity extends Activity {
         Store.put(this, "maxphotos", n(maxPhotos, 4));
         Store.put(this, "livemin", n(liveMin, 20));
         Store.put(this, "livemax", n(liveMax, 180));
+        Store.put(this, "maxtokens", n(maxTokens, 4000));
         if (toast) Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
     }
 
