@@ -22,6 +22,28 @@ public class SettingsActivity extends Activity {
         Ui.add(col, endpoint);
         Ui.add(col, model);
         Ui.add(col, key);
+        Ui.add(col, Ui.button(this, "Test connection", new View.OnClickListener() {
+            @Override
+            public void onClick(final View v) {
+                saveAll(false);
+                v.setEnabled(false);
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        final String report = Logfare.diagnose(getApplicationContext());
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                v.setEnabled(true);
+                                new android.app.AlertDialog.Builder(SettingsActivity.this)
+                                        .setTitle("Connection test").setMessage(report)
+                                        .setPositiveButton("OK", null).show();
+                            }
+                        });
+                    }
+                }).start();
+            }
+        }));
 
         Ui.add(col, Ui.heading(this, "The person whose phone this is"), 0, 14, 0, 2);
         Ui.add(col, Ui.text(this, "Let Logfare invent them (type an idea, or leave empty to be surprised):", 13, Ui.DIM));

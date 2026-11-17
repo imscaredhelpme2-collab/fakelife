@@ -60,6 +60,13 @@ final class Director {
         return bible;
     }
 
+    static void saveRaw(Context c, String reply) {
+        try (java.io.FileWriter w = new java.io.FileWriter(new java.io.File(c.getFilesDir(), "last_reply.txt"))) {
+            w.write(reply);
+        } catch (Exception ignored) {
+        }
+    }
+
     // ---------------------------------------------------------------- chapters
 
     /** Generates and writes the next chapter. Returns number of actions that worked. */
@@ -86,12 +93,16 @@ final class Director {
 
         Journal.add(c, "Chapter " + (idx + 1) + ": asking Logfare (" + Tm.day(start) + " to " + Tm.day(end) + ")...");
         JSONObject j;
+        String reply = Logfare.chat(c, authorPrompt(c), u.toString(), 0.9, 7000);
+        saveRaw(c, reply);
         try {
-            j = Logfare.parseJson(Logfare.chat(c, authorPrompt(c), u.toString(), 0.9, 7000));
+            j = Logfare.parseJson(reply);
         } catch (Exception first) {
-            Journal.add(c, "Reply was not valid JSON, retrying once...");
-            j = Logfare.parseJson(Logfare.chat(c, authorPrompt(c),
-                    u + "\nIMPORTANT: your last reply was not valid JSON. Reply with ONLY the JSON object, keep it shorter.", 0.7, 7000));
+            Journal.add(c, "Reply was not valid JSON (" + first.getMessage() + "). Starts with: " + Logfare.shorten(reply.replace('\n', ' '), 160) + " ... retrying once");
+            reply = Logfare.chat(c, authorPrompt(c),
+                    u + "\nIMPORTANT: your last reply was not valid JSON. Reply with ONLY the JSON object, keep it shorter.", 0.7, 7000);
+            saveRaw(c, reply);
+            j = Logfare.parseJson(reply);
         }
         JSONArray arr = j.optJSONArray("actions");
         if (arr == null || arr.length() == 0) throw new Exception("Logfare returned no actions");
