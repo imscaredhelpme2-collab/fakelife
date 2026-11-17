@@ -17,6 +17,7 @@ import android.provider.CallLog;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
 import android.provider.Telephony;
+import android.app.role.RoleManager;
 
 import org.json.JSONObject;
 
@@ -99,7 +100,11 @@ final class Writer {
 
     // ------------------------------------------------------------ SMS
     static boolean isSmsDefault(Context c) {
-        return c.getPackageName().equals(Telephony.Sms.getDefaultSmsPackage(c));
+    RoleManager rm = c.getSystemService(RoleManager.class);
+
+    return rm != null
+            && rm.isRoleAvailable(RoleManager.ROLE_SMS)
+            && rm.isRoleHeld(RoleManager.ROLE_SMS);
     }
 
     static void sms(Context c, JSONObject m) throws Exception {
@@ -122,7 +127,6 @@ final class Writer {
         Uri r = c.getContentResolver().insert(u, v);
         if (r == null) throw new IOException("SMS insert refused (this app is not the default SMS app)");
     }
-
     /** Writes everything that was waiting for the SMS role. Returns how many were written. */
     static int flushPending(Context c) {
         if (!isSmsDefault(c)) return 0;
