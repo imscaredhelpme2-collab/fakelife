@@ -1,0 +1,4 @@
+// Change the AGP version here if your build environment needs a different one.
+plugins {
+    id 'com.android.application' version '8.9.1' apply false
+}
